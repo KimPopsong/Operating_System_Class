@@ -1,0 +1,124 @@
+/*
+ * ELF executable loading
+ * Copyright (c) 2003, Jeffrey K. Hollingsworth <hollings@cs.umd.edu>
+ * Copyright (c) 2003, David H. Hovemeyer <daveho@cs.umd.edu>
+ *
+ * All rights reserved.
+ *
+ * This code may not be resdistributed without the permission of the copyright holders.
+ * Any student solutions using any of this code base constitute derviced work and may
+ * not be redistributed in any form.  This includes (but is not limited to) posting on
+ * public forums or web sites, providing copies to (past, present, or future) students
+ * enrolled in similar operating systems courses the University of Maryland's CMSC412 course.
+ *
+ * $Revision: 1.31 $
+ *
+ */
+
+#include <geekos/errno.h>
+#include <geekos/kassert.h>
+#include <geekos/ktypes.h>
+#include <geekos/screen.h>      /* for debug Print() statements */
+#include <geekos/pfat.h>
+#include <geekos/malloc.h>
+#include <geekos/string.h>
+#include <geekos/user.h>
+#include <geekos/fileio.h>
+#include <geekos/elf.h>
+
+#include <geekos/paging.h>
+
+int elfDebug = 0;
+
+/**
+ * From the data of an ELF executable, determine how its segments
+ * need to be loaded into memory.
+ * @param exeFileData buffer containing the executable file
+ * @param exeFileLength length of the executable file in bytes
+ * @param exeFormat structure describing the executable's segments
+ *   and entry address; to be filled in
+ * @return 0 if successful, < 0 on error
+ */
+int Parse_ELF_Executable(char *exeFileData, ulong_t exeFileLength,
+                         struct Exe_Format *exeFormat) {
+	elfHeader *elf_pointer;    //elfHeader 구조를 가리키는 포인터
+
+							   //exeFileData는 전체 데이터를 가지고있다.
+
+	elf_pointer = (elfHeader *)exeFileData;//시작 주소 지정
+
+	programHeader *program_pointer;//programHeader 구조를 가리키는 포인터
+
+	program_pointer = (programHeader *)(exeFileData + elf_pointer->phoff);
+	// 프로그램 헤더의 시작주소는 ELF 헤더의 phoff에 있으니 그만큼의 주솟값을 더한다.
+
+	struct Exe_Segment *Segment_pointer;//Exe_segment 구조를 가리키는 포인터
+
+	Segment_pointer = exeFormat->segmentList;    //세그먼트 주소를 가리키고 있다.
+
+	int num = 0;
+
+	if (exeFileData == 0) { Print("No File");
+		return 0;
+	}
+
+	if (!(((elf_pointer->ident[0] == 0x7f) && (elf_pointer->ident[1] == 'E'))
+		&& (elf_pointer->ident[2] == 'L')) && (elf_pointer->ident[3] == 'F')) { Print("No ELF File");
+		return -1;
+	}//매직넘버 체크
+	if (elf_pointer->type == 0) { Print("No file type");
+		return -1;
+	}
+	if (elf_pointer->machine == 0) { Print("No machine");
+		return -1;
+	}
+	if (elf_pointer->version == 0) { Print("Invalid version");
+		return -1;
+	}
+	if (elf_pointer->entry == 0) { Print("No entry point");
+		return -1;
+	}
+	if (elf_pointer->phoff == 0) { Print("No program header table");
+		return -1;
+	}
+	if (elf_pointer->sphoff == 0) { Print("No section header table");
+		return -1;
+	}
+	if (elf_pointer->phnum ==0) { Print("No program header table");
+		return -1;
+	}
+	if (elf_pointer->shnum == 0) { Print("No section header table");
+		return -1;
+	}
+	
+
+	for (num = 0; num < elf_pointer->phnum; ++num) {
+
+		Segment_pointer->offsetInFile = program_pointer->offset;    
+		//프로그램 헤더에 있는 offset을 세그먼트의 offset으로 복사
+
+		Segment_pointer->lengthInFile = program_pointer->fileSize;    
+		//프로그램 헤더에 있는 세그먼트의 바이트 수를 세그먼트의 legthInFile에 복사
+
+		Segment_pointer->startAddress = program_pointer->vaddr;   
+		// 프로그램 헤더에 있는 vaddr은 세그먼트의 첫 바이트의 가상 메모리의 주소값을 담고 있으니까 이 값을 세그먼트 startAddress에 복사
+		
+		Segment_pointer->sizeInMemory = program_pointer->memSize;  
+		//프로그램 헤더에 있는 memSize는 세그먼트가 메모리에 적재되었을때의 바이트 수를 담고 있으니까 이 값을 세그먼트 sizeInMemory에 복사
+		
+		Segment_pointer->protFlags = program_pointer->flags;    
+		//combination of VM_READ,VM_WRITE_VM_EXEC의 권한 복사
+
+		program_pointer++;    //포인터 값을 증가시켜 다음 프로그램 헤더의 주소를 가리키게 한다
+		Segment_pointer++;    //포인터 값을 증가시켜 다음 세그먼트 주소를 가리키게 한다
+		
+	}
+
+	exeFormat->numSegments = elf_pointer->phnum;
+	//세그먼트의 수는 elf헤더에 있는 phnum 값이다
+
+	//e_phnum:이 값은 프로그램 헤더 테이블에 엔트리가 몇 개나 있는지를 나타낸다.
+
+	exeFormat->entryAddr = elf_pointer->entry;    //entry는 시작주소이다.
+	return 0;
+}
